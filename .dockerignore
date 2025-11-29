@@ -1,0 +1,14 @@
+node_modules
+__pycache__
+*.pyc
+.git
+.gitignore
+.env
+.venv
+venv
+*.log
+.DS_Store
+README.md
+*.md
+!DEPLOYMENT.md
+
