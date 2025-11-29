@@ -1,103 +1,574 @@
-# GI Endoscopy AI Diagnostic Platform
+<div align="center">
 
-A modern, production-ready platform for AI-assisted gastrointestinal (GI) endoscopy image diagnosis with explainable visualizations (Grad-CAM). This repository contains both the Python backend (inference + explainability) and the React frontend (UI for uploads, controls, and visualizations). Docker files and quick-deploy scripts are included for smooth setup.
+# 🏥 GI Endoscopy AI Diagnostic Platform
 
-## Highlights
+### AI-Powered Gastrointestinal Disease Detection with Explainable AI
 
-- Powerful inference API over state-of-the-art vision models (ViT, DeiT3 traced)
-- Grad-CAM heatmaps and advanced visualization controls for explainability
-- Full-stack: Python FastAPI backend + React/Tailwind frontend
-- One-command local run and Docker-based deployment
-- Cross-platform quick start scripts for Windows and Linux/macOS
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![React](https://img.shields.io/badge/React-18+-61dafb.svg)](https://reactjs.org/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-Proprietary-red.svg)]()
 
-## Architecture
+[Features](#-features) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [API Docs](#-api-documentation) • [Deployment](#-deployment)
 
-- `backend/`: Python app that loads traced models and serves endpoints for prediction and heatmaps.
-- `frontend/`: React SPA with TailwindCSS that interacts with the backend to upload images, select models, and view results.
-- `docker-compose.yml`: Development docker-compose for running both services together.
-- `docker-compose.prod.yml`: Production-ready compose with Nginx.
+</div>
 
-See `PROJECT_STRUCTURE.md` for a deeper breakdown.
+---
 
-## Requirements
+## 📋 Overview
 
-- Python `3.10+`
-- Node.js `18+`
-- Docker `24+` (optional, recommended)
-- Git
+A **production-ready**, full-stack medical imaging platform that leverages state-of-the-art Vision Transformers (ViT, DeiT3) to analyze gastrointestinal endoscopy images. The platform provides real-time AI predictions with explainable Grad-CAM visualizations, enabling medical professionals to make informed diagnostic decisions with AI assistance.
 
-## Quick Start
+### 🎯 Key Capabilities
 
-### Option A: Local (no Docker)
+- **🔬 Advanced AI Models**: Pre-trained Vision Transformers (ViT, DeiT3) with traced inference for optimal performance
+- **🎨 Explainable AI**: Grad-CAM heatmap visualizations showing model attention areas
+- **⚡ Real-time Processing**: Fast inference with optimized PyTorch model serving
+- **🎛️ Interactive Controls**: Customizable visualization parameters and preprocessing options
+- **🐳 Container-Ready**: Full Docker support for development and production environments
+- **🔄 Cross-Platform**: Tested on Windows, Linux, and macOS with dedicated scripts
 
-Backend:
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Client Browser                          │
+│              (React SPA + TailwindCSS)                      │
+└────────────────────┬────────────────────────────────────────┘
+                     │ HTTP/REST
+                     ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Backend API Server                         │
+│           (Python FastAPI + PyTorch)                        │
+│  ┌──────────────┐  ┌─────────────┐  ┌─────────────┐       │
+│  │   Inference  │  │  Grad-CAM   │  │ Preprocessing│       │
+│  │   Pipeline   │  │  Generator  │  │   Service    │       │
+│  └──────────────┘  └─────────────┘  └─────────────┘       │
+└────────────────────┬────────────────────────────────────────┘
+                     │
+                     ▼
+          ┌──────────────────────┐
+          │  Traced PT Models    │
+          │  • vit_best.pt       │
+          │  • deit3_best.pt     │
+          └──────────────────────┘
+```
+
+### 📁 Project Structure
+
+```
+GI-Endoscopy-AI-Diagnostic-Platform/
+├── 📂 backend/                    # Python inference engine
+│   ├── app_gradcam.py            # FastAPI server with Grad-CAM
+│   ├── requirements.txt          # Python dependencies
+│   ├── Dockerfile                # Backend container config
+│   └── models/                   # Traced PyTorch models
+│       ├── vit_best_traced.pt
+│       └── deit3_best_traced.pt
+│
+├── 📂 frontend/                   # React web application
+│   ├── src/
+│   │   ├── App.js               # Main application component
+│   │   └── components/          # Reusable UI components
+│   │       ├── UploadSection.jsx
+│   │       ├── ModelSelector.jsx
+│   │       ├── HeatmapControls.jsx
+│   │       └── AdvancedVisualizations.jsx
+│   ├── package.json             # Node.js dependencies
+│   ├── tailwind.config.js       # TailwindCSS configuration
+│   └── Dockerfile               # Frontend container config
+│
+├── 🐳 docker-compose.yml          # Dev environment orchestration
+├── 🐳 docker-compose.prod.yml    # Production deployment config
+├── 📜 start_backend.bat          # Windows backend launcher
+├── 📜 start_frontend.bat         # Windows frontend launcher
+├── 🚀 deploy.sh / deploy.bat     # Quick deployment scripts
+└── 📚 Documentation/
+    ├── DEPLOYMENT.md
+    ├── QUICKSTART.md
+    └── PROJECT_STRUCTURE.md
+```
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+Ensure you have the following installed on your system:
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| **Python** | 3.10+ | Backend runtime |
+| **Node.js** | 18+ | Frontend build tool |
+| **Docker** | 24+ | Containerization (optional) |
+| **Git** | Latest | Version control |
+
+---
+
+### Option 1️⃣: Local Development (No Docker)
+
+#### Backend Setup
+
 ```cmd
+# Navigate to backend directory
 cd backend
+
+# Create virtual environment
 python -m venv .venv
+
+# Activate virtual environment (Windows)
 .venv\Scripts\activate
+
+# Upgrade pip and install dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
+
+# Start the backend server (default: http://localhost:8000)
 python app_gradcam.py
 ```
 
-Frontend (in a second terminal):
+> **Note**: Ensure your traced models (`.pt` files) are in `backend/models/` before starting.
+
+#### Frontend Setup
+
+Open a **new terminal** and run:
+
 ```cmd
+# Navigate to frontend directory
 cd frontend
+
+# Install dependencies
 npm install
+
+# Start development server (default: http://localhost:3000)
 npm start
 ```
 
-By default, the frontend runs on `http://localhost:3000` and expects the backend at `http://localhost:8000` (adjust if needed).
+The frontend will automatically proxy API requests to `http://localhost:8000`.
 
-### Option B: Docker Compose (dev)
+---
+
+### Option 2️⃣: Docker Compose (Development)
+
+Perfect for consistent development environments:
 
 ```cmd
+# Build and start both services
 docker compose up --build
+
+# Run in detached mode (background)
+docker compose up -d --build
+
+# View logs
+docker compose logs -f
+
+# Stop services
+docker compose down
 ```
 
-This spins up both services. Edit `docker-compose.yml` if you need to customize ports or environment variables.
+**Services will be available at:**
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000
+- API Docs: http://localhost:8000/docs
 
-### Option C: Production Compose
+---
+
+### Option 3️⃣: Production Deployment
+
+For production environments with optimized builds:
 
 ```cmd
+# Build and deploy production stack
 docker compose -f docker-compose.prod.yml up --build -d
+
+# Check status
+docker compose -f docker-compose.prod.yml ps
+
+# View production logs
+docker compose -f docker-compose.prod.yml logs -f
 ```
 
-## Scripts
+**Production configuration includes:**
+- ✅ Nginx reverse proxy
+- ✅ Optimized React build
+- ✅ Health checks
+- ✅ Resource limits
+- ✅ Restart policies
 
-- `start_backend.bat`: Start backend locally on Windows.
-- `start_frontend.bat`: Start frontend locally on Windows.
-- `deploy.sh` / `deploy.bat`: Quick deploy helpers; see `QUICK_DEPLOY.md` and `DEPLOYMENT.md`.
+> See [DEPLOYMENT.md](./DEPLOYMENT.md) for advanced deployment strategies.
 
-## API Overview
+---
 
-The backend serves endpoints for:
-- Image inference: returns predictions for uploaded endoscopy images.
-- Grad-CAM: returns heatmap overlays for explainability.
+## 📡 API Documentation
 
-Refer to `backend/README.md` for exact routes and payload examples.
+The backend exposes a RESTful API for image analysis and visualization.
 
-## Configuration
+### Core Endpoints
 
-- Models: Place your traced `.pt` files in `backend/models/`. Defaults: `vit_best_traced.pt`, `deit3_best_traced.pt`.
-- Nginx: See `frontend/nginx.conf` for production reverse proxy.
-- Tailwind: tweak `frontend/tailwind.config.js` and `postcss.config.js` for styling.
+#### `POST /predict`
+Upload an endoscopy image for AI diagnosis.
 
-## Troubleshooting
+**Request:**
+```bash
+curl -X POST "http://localhost:8000/predict" \
+  -F "file=@image.jpg" \
+  -F "model=vit"
+```
 
-- If GPU/torch issues arise, pin CUDA/torch versions in `backend/requirements.txt`.
-- On Windows, ensure you activate the virtual environment: `.venv\Scripts\activate`.
-- For CORS or proxy problems, check `frontend/README.md` and `nginx.conf`.
+**Response:**
+```json
+{
+  "prediction": "abnormal",
+  "confidence": 0.94,
+  "class_probabilities": {
+    "normal": 0.06,
+    "abnormal": 0.94
+  },
+  "model_used": "vit_best_traced"
+}
+```
 
-## Roadmap
+#### `POST /gradcam`
+Generate Grad-CAM heatmap visualization.
 
-- Dataset management and evaluation dashboards
-- Multi-model ensemble and confidence calibration
-- Role-based auth and secure upload storage
+**Request:**
+```bash
+curl -X POST "http://localhost:8000/gradcam" \
+  -F "file=@image.jpg" \
+  -F "model=deit3" \
+  -F "alpha=0.5"
+```
 
-## License
+**Response:**
+```json
+{
+  "heatmap_image": "base64_encoded_image...",
+  "prediction": "abnormal",
+  "confidence": 0.91
+}
+```
 
-Proprietary. All rights reserved.
+### Interactive API Docs
+
+Visit **http://localhost:8000/docs** for Swagger UI with live testing capabilities.
+
+> **Detailed Endpoint Documentation**: See [backend/README.md](./backend/README.md) for complete API reference.
+
+---
+
+## 🛠️ Configuration
+
+### Environment Variables
+
+Create a `.env` file in the project root:
+
+```env
+# Backend Configuration
+BACKEND_PORT=8000
+MODEL_PATH=./backend/models
+DEFAULT_MODEL=vit_best_traced
+TORCH_DEVICE=cuda  # or 'cpu'
+
+# Frontend Configuration
+REACT_APP_API_URL=http://localhost:8000
+REACT_APP_ENABLE_ANALYTICS=false
+
+# Docker Configuration
+COMPOSE_PROJECT_NAME=gi-endoscopy-ai
+```
+
+### Model Configuration
+
+Place your traced PyTorch models in `backend/models/`:
+
+```
+backend/models/
+├── vit_best_traced.pt      # Vision Transformer model
+└── deit3_best_traced.pt    # DeiT3 model
+```
+
+**Model Requirements:**
+- Format: TorchScript traced models (`.pt`)
+- Input: RGB images, 224×224 pixels
+- Output: Class probabilities
+
+### Frontend Customization
+
+#### Tailwind Theme
+Edit `frontend/tailwind.config.js`:
+
+```javascript
+module.exports = {
+  theme: {
+    extend: {
+      colors: {
+        primary: '#3B82F6',
+        secondary: '#10B981',
+      }
+    }
+  }
+}
+```
+
+#### Nginx Configuration (Production)
+Modify `frontend/nginx.conf` for reverse proxy settings.
+
+---
+
+## 🚢 Deployment
+
+### Platform-Specific Scripts
+
+#### Windows
+```cmd
+# Start backend
+start_backend.bat
+
+# Start frontend
+start_frontend.bat
+
+# Deploy both services
+deploy.bat
+```
+
+#### Linux/macOS
+```bash
+# Make scripts executable
+chmod +x deploy.sh
+
+# Deploy
+./deploy.sh
+```
+
+### Cloud Deployment Options
+
+<details>
+<summary><b>Azure Container Instances</b></summary>
+
+```bash
+# Login to Azure
+az login
+
+# Create resource group
+az group create --name gi-endoscopy-rg --location eastus
+
+# Deploy containers
+az container create \
+  --resource-group gi-endoscopy-rg \
+  --file docker-compose.prod.yml
+```
+</details>
+
+<details>
+<summary><b>AWS ECS/Fargate</b></summary>
+
+```bash
+# Install ECS CLI
+ecs-cli configure --cluster gi-endoscopy-cluster --region us-east-1
+
+# Deploy using docker-compose
+ecs-cli compose --file docker-compose.prod.yml up
+```
+</details>
+
+<details>
+<summary><b>Google Cloud Run</b></summary>
+
+```bash
+# Build and push images
+gcloud builds submit --config cloudbuild.yaml
+
+# Deploy backend
+gcloud run deploy gi-backend --image gcr.io/PROJECT_ID/backend
+
+# Deploy frontend
+gcloud run deploy gi-frontend --image gcr.io/PROJECT_ID/frontend
+```
+</details>
+
+> **Detailed Instructions**: See [DEPLOYMENT.md](./DEPLOYMENT.md) and [QUICK_DEPLOY.md](./QUICK_DEPLOY.md)
+
+---
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+<details>
+<summary><b>GPU/CUDA Errors</b></summary>
+
+**Problem**: `CUDA out of memory` or `No CUDA-capable device detected`
+
+**Solutions**:
+```cmd
+# Force CPU mode
+export TORCH_DEVICE=cpu  # Linux/macOS
+set TORCH_DEVICE=cpu     # Windows
+
+# Pin specific CUDA version in requirements.txt
+torch==2.0.1+cu118
+```
+</details>
+
+<details>
+<summary><b>Virtual Environment Issues (Windows)</b></summary>
+
+**Problem**: `Activate.ps1 cannot be loaded because running scripts is disabled`
+
+**Solution**:
+```powershell
+# Run PowerShell as Administrator
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Then activate
+.venv\Scripts\Activate.ps1
+```
+</details>
+
+<details>
+<summary><b>CORS/Proxy Errors</b></summary>
+
+**Problem**: Frontend can't connect to backend
+
+**Solutions**:
+1. Check `package.json` proxy setting:
+   ```json
+   "proxy": "http://localhost:8000"
+   ```
+
+2. Verify backend CORS settings in `app_gradcam.py`
+
+3. Check `frontend/nginx.conf` for production deployments
+</details>
+
+<details>
+<summary><b>Model Loading Errors</b></summary>
+
+**Problem**: `FileNotFoundError: [Errno 2] No such file or directory: 'models/vit_best_traced.pt'`
+
+**Solution**:
+```cmd
+# Verify models exist
+ls backend/models/
+
+# Expected output:
+# vit_best_traced.pt
+# deit3_best_traced.pt
+```
+
+Ensure `.pt` files are TorchScript traced models, not raw checkpoints.
+</details>
+
+<details>
+<summary><b>Docker Build Failures</b></summary>
+
+**Problem**: `ERROR [internal] load metadata for docker.io/library/python:3.10`
+
+**Solutions**:
+```cmd
+# Clear Docker cache
+docker builder prune -a
+
+# Rebuild without cache
+docker compose build --no-cache
+
+# Check Docker daemon is running
+docker info
+```
+</details>
+
+### Getting Help
+
+- 📖 Check [Documentation](./DEPLOYMENT.md) for detailed guides
+- 🐛 [Open an issue](https://github.com/AyanAhmedKhan/GI-Endoscopy-AI-Diagnostic-Platform/issues)
+- 💬 Review [backend/README.md](./backend/README.md) for API specifics
+
+---
+
+## 🗺️ Roadmap
+
+### Phase 1: Core Features ✅
+- [x] Vision Transformer inference pipeline
+- [x] Grad-CAM explainability
+- [x] React frontend with TailwindCSS
+- [x] Docker containerization
+
+### Phase 2: Enhanced Features 🚧
+- [ ] Multi-model ensemble predictions
+- [ ] Confidence calibration and uncertainty quantification
+- [ ] Dataset management dashboard
+- [ ] Batch processing API
+
+### Phase 3: Production Hardening 📋
+- [ ] User authentication (OAuth2/JWT)
+- [ ] Role-based access control (RBAC)
+- [ ] Audit logging and compliance tracking
+- [ ] Encrypted storage for medical images
+- [ ] DICOM format support
+
+### Phase 4: Advanced Analytics 🔮
+- [ ] Performance monitoring dashboards
+- [ ] A/B testing framework for models
+- [ ] Automated model retraining pipeline
+- [ ] Integration with PACS systems
+
+---
+
+## 👥 Contributing
+
+We welcome contributions! Please follow these guidelines:
+
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/AmazingFeature`)
+3. **Commit** your changes (`git commit -m 'Add AmazingFeature'`)
+4. **Push** to the branch (`git push origin feature/AmazingFeature`)
+5. **Open** a Pull Request
+
+### Development Guidelines
+- Follow PEP 8 (Python) and Airbnb style guide (JavaScript)
+- Write unit tests for new features
+- Update documentation as needed
+- Ensure Docker builds pass
+
+---
+
+## 📄 License
+
+**Proprietary License** - All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying, distribution, or use of this software, via any medium, is strictly prohibited without explicit written permission.
+
+---
+
+## 📚 Documentation
+
+- [**Quick Start Guide**](./QUICKSTART.md) - Get up and running in 5 minutes
+- [**Deployment Guide**](./DEPLOYMENT.md) - Production deployment strategies
+- [**Project Structure**](./PROJECT_STRUCTURE.md) - Detailed codebase walkthrough
+- [**Backend API**](./backend/README.md) - Complete API reference
+- [**ML Training Report**](./ML_Training_Report.md) - Model development insights
+- [**Complete Project Report**](./Complete_Project_Report.md) - Full technical documentation
+
+---
+
+## 🙏 Acknowledgments
+
+- **Vision Transformers**: [An Image is Worth 16x16 Words](https://arxiv.org/abs/2010.11929)
+- **DeiT**: [Training data-efficient image transformers](https://arxiv.org/abs/2012.12877)
+- **Grad-CAM**: [Visual Explanations from Deep Networks](https://arxiv.org/abs/1610.02391)
+
+---
+
+<div align="center">
+
+**Built with ❤️ for advancing medical AI diagnostics**
+
+[⬆ Back to Top](#-gi-endoscopy-ai-diagnostic-platform)
+
+</div>
 **For production deployment options, see `DEPLOYMENT.md`**
 
 ### Prerequisites
