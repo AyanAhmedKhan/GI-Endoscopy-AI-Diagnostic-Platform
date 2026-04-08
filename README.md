@@ -127,7 +127,8 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 # Start the backend server (default: http://localhost:8000)
-python app_gradcam.py
+uvicorn app_gradcam:app --host 0.0.0.0 --port 8000 --reload
+
 ```
 
 > **Note**: Ensure your traced models (`.pt` files) are in `backend/models/` before starting.

@@ -354,94 +354,292 @@ def apply_multilayer_gradcam(model, input_tensor, pred_idx, layers=None):
         traceback.print_exc()
         return {layer: torch.zeros((IMG_SIZE, IMG_SIZE)) for layer in layers}
 
-def apply_attention_rollout(model, input_tensor):
-    """Apply attention rollout visualization using efficient patch-based importance scoring."""
+def _try_extract_attention_weights(model, input_tensor):
+    """
+    Attempt to extract real attention weights from ViT/DeiT model internals.
+    Works by hooking into MultiheadAttention or similar attention modules.
+    Returns a list of attention matrices (one per layer) or None if extraction fails.
+    """
+    attention_weights = []
+    hooks = []
+    
     try:
-        # Fast method: Use gradient-based attention with patch aggregation
-        # This simulates attention rollout by computing importance per patch
+        # Try to iterate over named modules (works for some TorchScript models)
+        for name, module in model.named_modules():
+            # Match common attention module names in ViT/DeiT architectures
+            module_type = type(module).__name__
+            if any(attn_name in module_type.lower() for attn_name in ['attention', 'multiheadattention', 'selfattention']):
+                def hook_fn(mod, inp, out, layer_name=name):
+                    # MultiheadAttention returns (attn_output, attn_weights)
+                    if isinstance(out, tuple) and len(out) >= 2 and out[1] is not None:
+                        attention_weights.append(out[1].detach().cpu())
+                    elif isinstance(out, torch.Tensor):
+                        # Some implementations return just the output;
+                        # try to get attention from a stored attribute
+                        if hasattr(mod, 'attn_weights'):
+                            attention_weights.append(mod.attn_weights.detach().cpu())
+                
+                hook = module.register_forward_hook(hook_fn)
+                hooks.append(hook)
         
-        output = model(input_tensor)
-        pred_idx = output.argmax()
+        if not hooks:
+            return None
         
-        # Use gradient-based method for speed (much faster than occlusion)
-        attention_map = apply_gradcam_custom(model, input_tensor, pred_idx)
+        # Forward pass to trigger hooks
+        with torch.no_grad():
+            _ = model(input_tensor)
         
-        if attention_map.max() <= 0:
-            print("⚠️  Grad-CAM returned empty, trying alternative method")
-            # Alternative: Use input gradients with patch aggregation
-            input_tensor_grad = input_tensor.clone().detach().requires_grad_(True)
-            output = model(input_tensor_grad)
-            score = output[0, pred_idx]
-            score.backward()
+        # Clean up hooks
+        for hook in hooks:
+            hook.remove()
+        
+        if len(attention_weights) > 0:
+            print(f"✅ Extracted {len(attention_weights)} attention layers from model")
+            return attention_weights
+        else:
+            return None
             
-            if input_tensor_grad.grad is not None:
-                gradients = input_tensor_grad.grad.data[0].abs().mean(dim=0)
-                attention_map = F.relu(gradients)
-                
-                # Normalize
-                if attention_map.max() > 0:
-                    attention_map = (attention_map - attention_map.min()) / (attention_map.max() - attention_map.min() + 1e-8)
-                else:
-                    attention_map = torch.ones_like(attention_map) * 0.5
-        
-        # Convert to numpy for patch processing
-        attention_np = attention_map.numpy() if isinstance(attention_map, torch.Tensor) else attention_map
-        
-        # Simulate patch-based attention (ViT uses 16x16 patches)
-        patch_size = 16
-        num_patches_h = IMG_SIZE // patch_size
-        num_patches_w = IMG_SIZE // patch_size
-        
-        # Create patch-aggregated attention map
-        patch_attention = np.zeros((num_patches_h, num_patches_w))
-        
-        for i in range(num_patches_h):
-            for j in range(num_patches_w):
-                h_start = i * patch_size
-                h_end = min((i + 1) * patch_size, IMG_SIZE)
-                w_start = j * patch_size
-                w_end = min((j + 1) * patch_size, IMG_SIZE)
-                
-                # Average attention in this patch
-                patch_attention[i, j] = attention_np[h_start:h_end, w_start:w_end].mean()
-        
-        # Upsample patch attention back to full resolution
-        from scipy.ndimage import zoom
-        zoom_factor_h = IMG_SIZE / num_patches_h
-        zoom_factor_w = IMG_SIZE / num_patches_w
-        attention_rollout = zoom(patch_attention, (zoom_factor_h, zoom_factor_w), order=1)
-        
-        # Ensure correct size
-        if attention_rollout.shape[0] != IMG_SIZE or attention_rollout.shape[1] != IMG_SIZE:
-            attention_rollout = zoom(attention_rollout, 
-                                    (IMG_SIZE / attention_rollout.shape[0], 
-                                     IMG_SIZE / attention_rollout.shape[1]), 
-                                    order=1)
-        
-        # Smooth for better visualization
-        from scipy import ndimage
-        attention_rollout = ndimage.gaussian_filter(attention_rollout, sigma=1.5)
-        
-        # Normalize
-        if attention_rollout.max() > 0:
-            attention_rollout = attention_rollout / attention_rollout.max()
-        
-        # Convert back to tensor
-        attention_map = torch.from_numpy(attention_rollout).float()
-        
-        return attention_map
-        
     except Exception as e:
-        print(f"Attention rollout error: {e}, using Grad-CAM fallback")
-        import traceback
-        traceback.print_exc()
-        # Fallback to Grad-CAM
+        # Clean up hooks on error
+        for hook in hooks:
+            try:
+                hook.remove()
+            except:
+                pass
+        print(f"⚠️  Could not extract attention weights: {e}")
+        return None
+
+
+def _true_attention_rollout(attention_weights, num_patches_h, num_patches_w):
+    """
+    Perform true attention rollout from a list of attention weight matrices.
+    Each attention matrix has shape [batch, num_heads, seq_len, seq_len] 
+    where seq_len = num_patches + 1 (the +1 is the CLS token).
+    
+    Returns a numpy array of shape (num_patches_h, num_patches_w) showing 
+    how much each image patch contributes to the final CLS token representation.
+    """
+    rollout = None
+    
+    for attn in attention_weights:
+        # attn shape: [batch, num_heads, seq_len, seq_len]
+        # Average across heads -> [batch, seq_len, seq_len]
+        if len(attn.shape) == 4:
+            attn_heads_mean = attn.mean(dim=1)
+        elif len(attn.shape) == 3:
+            attn_heads_mean = attn
+        else:
+            continue
+        
+        # Take first batch element -> [seq_len, seq_len]
+        attn_matrix = attn_heads_mean[0].numpy()
+        
+        # Add identity matrix (residual connections)
+        identity = np.eye(attn_matrix.shape[0])
+        attn_with_residual = 0.5 * attn_matrix + 0.5 * identity
+        
+        # Re-normalize rows to sum to 1
+        row_sums = attn_with_residual.sum(axis=-1, keepdims=True)
+        attn_with_residual = attn_with_residual / (row_sums + 1e-8)
+        
+        # Accumulate via matrix multiplication
+        if rollout is None:
+            rollout = attn_with_residual
+        else:
+            rollout = rollout @ attn_with_residual
+    
+    if rollout is None:
+        return None
+    
+    # Extract CLS token's attention over patch tokens
+    # CLS token is at index 0, patch tokens start at index 1
+    num_patches = num_patches_h * num_patches_w
+    
+    if rollout.shape[0] > num_patches:
+        # CLS token row -> attention to all patches (skip CLS self-attention)
+        cls_attention = rollout[0, 1:num_patches + 1]
+    else:
+        # No CLS token, use mean of all rows
+        cls_attention = rollout.mean(axis=0)[:num_patches]
+    
+    # Reshape to patch grid
+    if len(cls_attention) == num_patches:
+        patch_attention = cls_attention.reshape(num_patches_h, num_patches_w)
+    else:
+        # Fallback: take what we can and reshape
+        side = int(np.sqrt(len(cls_attention)))
+        if side * side == len(cls_attention):
+            patch_attention = cls_attention.reshape(side, side)
+        else:
+            return None
+    
+    return patch_attention
+
+
+def _gradient_input_patch_attention(model, input_tensor, patch_size=16):
+    """
+    Compute patch-level attention using Gradient × Input method.
+    This is fundamentally different from GradCAM because:
+    1. It uses signed gradients multiplied by input activations (not absolute gradients)
+    2. It aggregates at the patch level first, then upsamples (not pixel-level)
+    3. It uses power-law sharpening to emphasize top patches
+    4. It uses percentile-based normalization (not min-max)
+    """
+    input_tensor_grad = input_tensor.clone().detach().requires_grad_(True)
+    
+    # Forward pass
+    output = model(input_tensor_grad)
+    pred_idx = output.argmax()
+    score = output[0, pred_idx]
+    
+    # Backward pass
+    if input_tensor_grad.grad is not None:
+        input_tensor_grad.grad.zero_()
+    score.backward()
+    
+    if input_tensor_grad.grad is None:
+        raise ValueError("Gradients not computed")
+    
+    # KEY DIFFERENCE from GradCAM: use gradient × input (not just |gradient|)
+    # This captures both the sensitivity AND the activation direction
+    gradients = input_tensor_grad.grad.data[0]   # [C, H, W]
+    inputs = input_tensor_grad.data[0]             # [C, H, W]
+    
+    # Gradient × Input attribution (signed)
+    grad_input = (gradients * inputs).sum(dim=0)   # [H, W] - sum across channels
+    
+    # Take absolute value after the multiplication (different from GradCAM which takes abs of gradients first)
+    grad_input = grad_input.abs()
+    
+    grad_input_np = grad_input.detach().cpu().numpy()
+    
+    num_patches_h = IMG_SIZE // patch_size
+    num_patches_w = IMG_SIZE // patch_size
+    
+    # Aggregate at patch level
+    patch_attention = np.zeros((num_patches_h, num_patches_w))
+    for i in range(num_patches_h):
+        for j in range(num_patches_w):
+            h_s, h_e = i * patch_size, (i + 1) * patch_size
+            w_s, w_e = j * patch_size, (j + 1) * patch_size
+            # Use max pooling per patch (not mean) — captures the most salient pixel in each patch
+            patch_attention[i, j] = grad_input_np[h_s:h_e, w_s:w_e].max()
+    
+    # Power-law sharpening (gamma = 2.0) — emphasizes top patches, suppresses mid-level noise
+    patch_attention = np.power(patch_attention, 2.0)
+    
+    # Percentile-based normalization (clip bottom 10% and top 1% for better contrast)
+    p_low = np.percentile(patch_attention, 10)
+    p_high = np.percentile(patch_attention, 99)
+    if p_high > p_low:
+        patch_attention = np.clip(patch_attention, p_low, p_high)
+        patch_attention = (patch_attention - p_low) / (p_high - p_low)
+    elif patch_attention.max() > 0:
+        patch_attention = patch_attention / patch_attention.max()
+    
+    return patch_attention, num_patches_h, num_patches_w
+
+
+def apply_attention_rollout(model, input_tensor):
+    """
+    Apply true attention rollout visualization.
+    
+    Strategy:
+    1. First, try to extract real attention weights from the model and perform 
+       true attention rollout (multiplying attention matrices across layers).
+    2. If that fails (e.g. TorchScript model doesn't expose attention layers),
+       fall back to Gradient×Input patch-level attribution which is fundamentally 
+       different from GradCAM.
+    """
+    from scipy.ndimage import zoom
+    from scipy import ndimage
+    
+    patch_size = 16
+    num_patches_h = IMG_SIZE // patch_size
+    num_patches_w = IMG_SIZE // patch_size
+    
+    patch_attention = None
+    method_used = "none"
+    
+    # ---- Method 1: True attention rollout from model internals ----
+    try:
+        attn_weights = _try_extract_attention_weights(model, input_tensor)
+        if attn_weights is not None and len(attn_weights) > 0:
+            patch_attention = _true_attention_rollout(attn_weights, num_patches_h, num_patches_w)
+            if patch_attention is not None:
+                method_used = "true_rollout"
+                print(f"✅ True attention rollout computed from {len(attn_weights)} layers")
+    except Exception as e:
+        print(f"⚠️  True attention rollout failed: {e}")
+    
+    # ---- Method 2: Gradient × Input patch attribution (distinct from GradCAM) ----
+    if patch_attention is None:
         try:
-            output = model(input_tensor)
-            pred_idx = output.argmax()
-            return apply_gradcam_custom(model, input_tensor, pred_idx)
-        except:
+            patch_attention, num_patches_h, num_patches_w = _gradient_input_patch_attention(
+                model, input_tensor, patch_size
+            )
+            method_used = "grad_input_patch"
+            print(f"✅ Gradient×Input patch attention computed ({num_patches_h}×{num_patches_w} patches)")
+        except Exception as e:
+            print(f"⚠️  Gradient×Input patch attention failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # ---- Method 3: Last resort — occlusion-based patch importance ----
+    if patch_attention is None:
+        try:
+            print("🔄 Using occlusion-based patch importance (slower)...")
+            with torch.no_grad():
+                base_output = model(input_tensor)
+                base_prob = F.softmax(base_output, dim=1)
+                pred_idx = int(base_prob.argmax())
+                base_score = float(base_prob[0, pred_idx])
+            
+            patch_attention = np.zeros((num_patches_h, num_patches_w))
+            for i in range(num_patches_h):
+                for j in range(num_patches_w):
+                    occluded = input_tensor.clone()
+                    h_s, h_e = i * patch_size, (i + 1) * patch_size
+                    w_s, w_e = j * patch_size, (j + 1) * patch_size
+                    occluded[:, :, h_s:h_e, w_s:w_e] = 0  # Zero out patch
+                    
+                    with torch.no_grad():
+                        occ_output = model(occluded)
+                        occ_prob = F.softmax(occ_output, dim=1)
+                        occ_score = float(occ_prob[0, pred_idx])
+                    
+                    # Importance = how much the score drops when this patch is occluded
+                    patch_attention[i, j] = max(0.0, base_score - occ_score)
+            
+            method_used = "occlusion"
+            print(f"✅ Occlusion-based patch importance computed")
+        except Exception as e:
+            print(f"❌ All attention rollout methods failed: {e}")
             return torch.zeros((IMG_SIZE, IMG_SIZE))
+    
+    # ---- Normalize patch attention ----
+    if patch_attention.max() > 0:
+        patch_attention = patch_attention / (patch_attention.max() + 1e-8)
+    
+    # ---- Upsample to full image resolution ----
+    zoom_h = IMG_SIZE / patch_attention.shape[0]
+    zoom_w = IMG_SIZE / patch_attention.shape[1]
+    attention_full = zoom(patch_attention, (zoom_h, zoom_w), order=1)
+    
+    # Ensure correct size
+    if attention_full.shape[0] != IMG_SIZE or attention_full.shape[1] != IMG_SIZE:
+        attention_full = zoom(attention_full,
+                              (IMG_SIZE / attention_full.shape[0],
+                               IMG_SIZE / attention_full.shape[1]), order=1)
+    
+    # Light smoothing to remove hard patch edges (but keep patch structure visible)
+    attention_full = ndimage.gaussian_filter(attention_full, sigma=3.0)
+    
+    # Final normalization
+    if attention_full.max() > 0:
+        attention_full = attention_full / attention_full.max()
+    
+    return torch.from_numpy(attention_full.astype(np.float32))
 
 def generate_lesion_mask(activation_map, threshold=0.35, smooth=True, use_morphology=True):
     """Generate improved binary lesion mask from activation map with smoothing and morphological filtering."""
@@ -993,12 +1191,13 @@ async def predict(
                     attention_map = apply_attention_rollout(model_for_cam, tensor)
                     
                     if attention_map is not None and attention_map.max() > 0:
+                        # Use 'plasma' colormap for attention rollout to visually distinguish from GradCAM
                         attention_overlay = blend_heatmap(
                             original_img, attention_map,
                             alpha=heatmap_alpha,
                             smooth=heatmap_smooth,
                             sigma=heatmap_sigma,
-                            colormap=heatmap_colormap,
+                            colormap='plasma',
                             show_contours=show_contours,
                             contour_threshold=contour_threshold
                         )
